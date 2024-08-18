@@ -1,0 +1,95 @@
+---
+title: "Assignment1"
+author: "Pluto Chen Yang"
+date: "2024-07-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Question 0:
+```{r}
+library(tidyverse)
+library(dplyr)
+library(readxl)
+library(haven)
+library(janitor)
+```
+
+
+Question 1a:
+```{r}
+#Import Tooth_grown_data by using "Import Dataset" in "Environment" area
+```
+
+Question 1b:
+```{r}
+data_dimensions <- dim(ToothGrowth)
+cat("The dataset contains", data_dimensions[2], "variables and", data_dimensions[1], "observations.\n")
+```
+
+Question 1c:
+```{r}
+variable_types <- sapply(ToothGrowth, class)
+print(variable_types)
+```
+
+Question 1d:
+```{r}
+missing_data_values <- ToothGrowth
+missing_data_values %>% summarise(
+  across(everything(), ~sum(is.na(.x)))
+)
+```
+
+Question 1e:
+```{r}
+library(dplyr)
+mean_values <- ToothGrowth %>% 
+  summarize(across(where(is.numeric), mean, na.rm = TRUE))
+print(mean_values)
+```
+
+Question 2a:
+```{r}
+getwd()
+penguin_data <- (read.csv("penguin_data.csv"))
+
+```
+
+Question 2b:
+```{r}
+summary(penguin_data)
+```
+
+Question 2c:
+```{r}
+dim_penguin_data <- dim(penguin_data)
+cat("The dataset contains", dim_penguin_data[2], "variables and", dim_penguin_data[1], "observations.\n")
+```
+
+Question 2d:
+```{r}
+penguin_data %>% summarise(
+  across(everything(), ~sum(is.na(.x)))
+)
+```
+
+Question 3a:
+```{r}
+pen_sel <- select(penguin_data, body_mass_g)
+filter(pen_sel, body_mass_g > 4200) %>% head(pen_sel, n = 10)
+```
+
+Question 3b:
+```{r}
+penguin_data_n_na <- na.omit(penguin_data)
+pen_sel2 <- select(penguin_data_n_na, bill_length_mm, bill_depth_mm, flipper_length_mm, body_mass_g)%>% head(pen_sel2, n = 10)
+pen_sel3 <- mutate(pen_sel2, body_mass_kg = body_mass_g / 1000, bill_length_cm = bill_length_mm/10, bill_depth_cm = bill_depth_mm / 10, flipper_length_cm = flipper_length_mm / 10)
+
+pen_show <- select(pen_sel3, bill_length_cm, bill_depth_cm, flipper_length_cm, body_mass_kg)
+print(pen_show)
+```
+
