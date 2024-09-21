@@ -1,0 +1,181 @@
+---
+title: "GPT_Paper"
+author: "Pluto Chen Yang"
+date: "2024-09-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Packages, message=FALSE, warning=FALSE}
+# 加载所需的库
+library(ggplot2)
+library(dplyr)
+library(corrplot)
+library(tidyverse)
+library(caret)
+library(broom)
+library(pROC)
+library(nnet)
+```
+
+```{r}
+summary(data)
+#print(data$CAEC)
+```
+
+```{r}
+# Load necessary libraries
+
+# Load your dataset
+# Replace 'your_dataset.csv' with the actual path to your dataset
+data <- read.csv('ObesityDataSet.csv')
+
+# Data cleaning (you may adjust according to your data)
+data <- data %>%
+  filter(Age >= 14 & Age <= 61) %>%  # Ensuring age range
+  mutate(
+    Gender = as.factor(Gender),
+    FAVC = as.factor(FAVC),
+    SCC = as.factor(SCC),
+    SMOKE = as.factor(SMOKE),
+    family_history_with_overweight = as.factor(family_history_with_overweight),
+    MTRANS = as.factor(MTRANS),
+    NObeyesdad = as.factor(NObeyesdad)
+  )
+
+# 1. Plot distribution of obesity levels
+ggplot(data, aes(x = NObeyesdad, fill = Gender)) +
+  geom_bar(position = 'dodge') +
+  labs(title = "Distribution of Obesity Levels by Gender", x = "Obesity Level", y = "Count") +
+  theme_minimal()
+
+# 2. Correlation plot of continuous variables
+continuous_vars <- data %>%
+  select(Age, Height, Weight, FCVC, NCP, CH2O, FAF, TUE)
+
+# Calculate correlation matrix
+corr_matrix <- cor(continuous_vars, use = "complete.obs")
+
+# Plot correlation matrix
+corrplot(corr_matrix, method = 'color', type = 'upper', tl.col = "black", tl.cex = 0.8)
+
+# 3. Boxplot of Caloric Intake vs Obesity Levels
+ggplot(data, aes(x = NObeyesdad, y = CALC, fill = NObeyesdad)) +
+  geom_boxplot() +
+  labs(title = "Caloric Intake vs Obesity Levels", x = "Obesity Level", y = "Caloric Intake") +
+  theme_minimal()
+
+# 4. Boxplot of Physical Activity Frequency vs Obesity Levels
+ggplot(data, aes(x = NObeyesdad, y = FAF, fill = NObeyesdad)) +
+  geom_boxplot() +
+  labs(title = "Physical Activity Frequency vs Obesity Levels", x = "Obesity Level", y = "Physical Activity Frequency") +
+  theme_minimal()
+
+# 5. Scatter plot: Age vs Obesity Levels
+ggplot(data, aes(x = Age, y = Weight, color = NObeyesdad)) +
+  geom_point(alpha = 0.6) +
+  labs(title = "Age vs Weight by Obesity Levels", x = "Age", y = "Weight") +
+  theme_minimal()
+
+# 6. Bar plot of Family History of Overweight vs Obesity Levels
+ggplot(data, aes(x = family_history_with_overweight, fill = NObeyesdad)) +
+  geom_bar(position = "dodge") +
+  labs(title = "Family History of Overweight vs Obesity Levels", x = "Family History", y = "Count") +
+  theme_minimal()
+
+# 7. Boxplot of Time Using Technology Devices vs Obesity Levels
+ggplot(data, aes(x = NObeyesdad, y = TUE, fill = NObeyesdad)) +
+  geom_boxplot() +
+  labs(title = "Time Using Technology Devices vs Obesity Levels", x = "Obesity Level", y = "Time (Hours)") +
+  theme_minimal()
+
+# 8. Violin plot of vegetable consumption frequency vs Obesity Levels
+ggplot(data, aes(x = NObeyesdad, y = FCVC, fill = NObeyesdad)) +
+  geom_violin() +
+  labs(title = "Vegetable Consumption Frequency vs Obesity Levels", x = "Obesity Level", y = "Frequency of Vegetable Consumption") +
+  theme_minimal()
+
+```
+
+```{r}
+# Save all plots as images (optional)
+ggsave("obesity_distribution_by_gender.png")
+ggsave("correlation_matrix.png")
+ggsave("caloric_intake_vs_obesity_levels.png")
+ggsave("physical_activity_vs_obesity_levels.png")
+ggsave("age_vs_weight_obesity_levels.png")
+ggsave("family_history_vs_obesity_levels.png")
+ggsave("time_using_technology_vs_obesity.png")
+ggsave("vegetable_consumption_vs_obesity.png")
+```
+
+```{r}
+# Multinomial Logistic Regression Model
+# Using multinom from the nnet package
+multinom_model <- multinom(NObeyesdad ~ Age + Gender + Height + Weight + CALC + FAVC + FCVC + NCP + SCC + 
+                           SMOKE + CH2O + family_history_with_overweight + FAF + TUE + MTRANS,
+                           data = data)
+
+# Summary of the model
+summary(multinom_model)
+
+# Predicting the probabilities
+predicted_probs <- predict(multinom_model, type = "probs")
+
+# Predicting the class with the highest probability
+predicted_class <- colnames(predicted_probs)[max.col(predicted_probs, ties.method = "first")]
+
+# Creating a confusion matrix
+confusion_matrix <- confusionMatrix(as.factor(predicted_class), data$NObeyesdad)
+
+# Displaying the confusion matrix
+print(confusion_matrix)
+
+# Plotting ROC Curve for one class vs rest (binary case, repeated for each class)
+# We can only plot ROC for one-vs-all when using multinomial
+
+# Define a color palette
+palette_colors <- rainbow(length(levels(data$NObeyesdad)))
+
+# Plot ROC curves for each class
+for (i in 1:length(levels(data$NObeyesdad))) {
+  level <- levels(data$NObeyesdad)[i]
+  roc_curve <- roc(data$NObeyesdad == level, predicted_probs[, level])
+  plot(roc_curve, main = paste("ROC Curve for", level), col = palette_colors[i], legacy.axes = TRUE)
+  abline(a = 0, b = 1, lty = 2, col = "gray") # Add a diagonal line for reference
+}
+
+```
+
+```{r}
+# Load necessary library
+library(pROC)
+
+# Define a color palette for each class
+palette_colors <- rainbow(length(levels(data$NObeyesdad)))
+
+# Initialize the plot with the first ROC curve
+first_level <- levels(data$NObeyesdad)[1]
+roc_curve <- roc(data$NObeyesdad == first_level, predicted_probs[, first_level])
+
+# Plot the first ROC curve
+plot(roc_curve, col = palette_colors[1], legacy.axes = TRUE, main = "ROC Curves for All Obesity Levels")
+
+# Loop through the rest of the levels and add them to the same plot
+for (i in 2:length(levels(data$NObeyesdad))) {
+  level <- levels(data$NObeyesdad)[i]
+  roc_curve <- roc(data$NObeyesdad == level, predicted_probs[, level])
+  lines(roc_curve, col = palette_colors[i]) # Add ROC curve to the existing plot
+}
+
+# Add a legend to the plot
+legend("bottomright", legend = levels(data$NObeyesdad), col = palette_colors, lty = 1, title = "Obesity Levels")
+
+# Add a diagonal reference line
+abline(a = 0, b = 1, lty = 2, col = "gray")
+
+```
+

@@ -1,0 +1,219 @@
+---
+title: "Obesity"
+author: "Pluto Chen Yang"
+date: "2024-09-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+summary(df)
+```
+
+```{r Packages, message=FALSE, warning=FALSE}
+# 加载所需的库
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(randomForest)
+library(xgboost)
+library(data.table)
+library(e1071)
+```
+
+```{r}
+# 读取数据集
+df <- read.csv("ObesityDataSet.csv")
+data <- df
+train <- df
+test <- df
+
+head(df)
+```
+
+```{r}
+str(df)
+summary(df)
+dim(df)
+sapply(df, class)
+```
+
+```{r}
+# 检查缺失值
+colSums(is.na(df))
+```
+
+```{r}
+# 标签编码（使用factor代替LabelEncoder）
+df$Gender <- as.numeric(factor(df$Gender))
+df$SMOKE <- as.numeric(factor(df$SMOKE))
+df$SCC <- as.numeric(factor(df$SCC))
+df$FAVC <- as.numeric(factor(df$FAVC))
+head(df)
+```
+
+```{r}
+# 还原编码
+df$SMOKE <- factor(df$SMOKE)
+```
+
+```{r}
+# 统计数据
+table(df)
+```
+
+```{r}
+# 转换float类型为int
+df <- df %>%
+  mutate(across(where(is.numeric), as.integer, .names = "int_{col}"))
+```
+
+```{r}
+# 计算Weight的Top 6
+max_weight <- df %>%
+  group_by(Weight) %>%
+  summarise(Count = n()) %>%
+  arrange(desc(Count)) %>%
+  head(6)
+
+max_weight
+
+```
+
+```{r}
+# 绘制条形图
+ggplot(df, aes(x = reorder(Age, Weight), y = Weight)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(title = "Top 10 Age Groups with Highest Total Weight",
+       x = "Age", y = "Total Weight (kg)") +
+  theme_minimal()
+```
+
+```{r}
+# 计算相关性
+correlation <- cor(df[, c("Height", "Weight", "Age")])
+correlation
+```
+
+```{r}
+# 绘制相关性热图
+ggplot(melt(correlation), aes(Var1, Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2()
+```
+
+```{r}
+# 绘制散点图
+ggplot(df, aes(x = Weight, y = Height)) +
+  geom_point(color = 'skyblue') +
+  theme_minimal() +
+  labs(title = "Height and Weight Distribution", x = "Weight (kg)", y = "Height (cm)")
+```
+
+```{r}
+# 子集数据
+df2 <- df[, c("SMOKE", "FAVC", "family_history_with_overweight", "CAEC", "Age")]
+```
+
+```{r}
+# 检查类别型变量
+categ_col <- names(df2)[sapply(df2, is.factor)]
+print(categ_col)
+```
+
+```{r}
+# 绘制每个类别型变量与Age的关系
+for (col in categ_col) {
+  ggplot(df2, aes_string(x = col, y = "Age")) +
+    geom_bar(stat = "summary", fun = "mean") +
+    labs(title = paste("Average Ages for different types addiction or problems in", col, "column"),
+         x = col, y = "Average Age") +
+    theme_minimal()
+}
+```
+
+```{r}
+# 饼图
+caec_labels <- unique(df$CAEC)
+ggplot(df, aes(x = "", fill = CAEC)) +
+  geom_bar(width = 1) +
+  coord_polar(theta = "y") +
+  labs(title = "Distribution of CAEC Values") +
+  theme_minimal()
+```
+
+```{r}
+# 模型训练和预测
+
+# 将分类变量转换为虚拟变量
+train <- train %>%
+  mutate(across(all_of(c("Gender", "family_history_with_overweight", "FAVC", "SMOKE", "SCC")), as.factor)) %>%
+  dummy_cols(select_columns = c("Gender", "family_history_with_overweight", "FAVC", "SMOKE", "SCC"), remove_first_dummy = TRUE)
+
+test <- test %>%
+  mutate(across(all_of(c("Gender", "family_history_with_overweight", "FAVC", "SMOKE", "SCC")), as.factor)) %>%
+  dummy_cols(select_columns = c("Gender", "family_history_with_overweight", "FAVC", "SMOKE", "SCC"), remove_first_dummy = TRUE)
+
+```
+
+```{r}
+# 标签编码
+le_vars <- c("CAEC", "CALC", "MTRANS")
+for (var in le_vars) {
+  train[[var]] <- as.numeric(factor(train[[var]]))
+  test[[var]] <- as.numeric(factor(test[[var]]))
+}
+
+train$NObeyesdad <- as.numeric(factor(train$NObeyesdad))
+```
+
+```{r}
+# 特征缩放
+preProc <- preProcess(train, method = c("YeoJohnson"))
+train_scaled <- predict(preProc, train)
+```
+
+```{r}
+# 删除异常值
+remove_outliers <- function(data) {
+  Q1 <- apply(data, 2, quantile, 0.25)
+  Q3 <- apply(data, 2, quantile, 0.75)
+  IQR <- Q3 - Q1
+  data <- data[!(apply((data < (Q1 - 1.5 * IQR)) | (data > (Q3 + 1.5 * IQR)), 1, any)),]
+  return(data)
+}
+train_scaled <- remove_outliers(train_scaled)
+```
+
+```{r}
+# 训练和测试集划分
+set.seed(42)
+trainIndex <- createDataPartition(train_scaled$NObeyesdad, p = 0.8, list = FALSE)
+X_train <- train_scaled[trainIndex, -ncol(train_scaled)]
+y_train <- train_scaled[trainIndex, "NObeyesdad"]
+X_test <- train_scaled[-trainIndex, -ncol(train_scaled)]
+y_test <- train_scaled[-trainIndex, "NObeyesdad"]
+```
+
+```{r}
+# 随机森林模型
+rf_model <- randomForest(x = X_train, y = as.factor(y_train), ntree = 100, maxnodes = 20)
+y_pred_rf <- predict(rf_model, X_test)
+```
+
+```{r}
+# XGBoost模型
+xgb_model <- xgboost(data = as.matrix(X_train), label = as.numeric(y_train) - 1, nrounds = 100, max_depth = 20, objective = "multi:softprob")
+y_pred_xgb <- predict(xgb_model, as.matrix(X_test))
+y_pred_xgb <- max.col(matrix(y_pred_xgb, ncol = 2)) - 1
+```
+
+```{r}
+# 评估模型性能
+confusionMatrix(y_pred_rf, as.factor(y_test))
+confusionMatrix(as.factor(y_pred_xgb), as.factor(y_test))
+```
+

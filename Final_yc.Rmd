@@ -1,0 +1,494 @@
+---
+title: "try"
+author: "Pluto Chen Yang"
+date: "2024-08-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Packages, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(haven)
+library(readxl)
+library(janitor)
+library(ggpubr)
+library(survey)
+library(ggplot2)
+library(ggsurvey)
+library(gtsummary)
+library(questionr)
+library(broom)
+library(brms)
+library(rstanarm)
+library(rpart)
+library(rpart.plot)
+library(pROC)
+library(class)
+library(caret)
+library(dplyr)
+```
+
+```{r}
+# Read .dta file into R
+BRFSSData <- read_dta("LLCP2022.dta")
+BRFSSData <- BRFSSData %>% clean_names()
+
+BRFSSData_survey <- svydesign(ids = ~ psu, strata = ~ ststr, data = BRFSSData, weights = ~ llcpwt, nest = TRUE)
+
+list_of_features <- c('priminsr', 'sex', 'age_g', 'racepr1', 
+                      'totinda', 'sleptim1', 'rfsmok3', 'rfbing6', 'addepev3', 'ltasth1', 'chccopd3',
+                      'michd')
+list_of_survey_unit <- c('llcpwt', 'psu', 'ststr')
+
+BRFSSData_Nevada <- 
+  BRFSSData %>% 
+  filter(state %in% c(1, 2)) %>% 
+  select(all_of(c(list_of_features, list_of_survey_unit)))
+```
+
+
+```{r}
+# Set code values
+insurance_label <- c('Through Employer', 'Private', 'Medicare', 'Medigap', 'Medicaid', "chip", 'Military Related',
+                     'Indian Health Service', 'State Sponsored', 'Other Government Program', 
+                     "Don't Know", 'No Coverage', 'Refused')
+insurance_column <- factor(BRFSSData_Nevada$priminsr, labels = insurance_label)
+levels(insurance_column)[levels(insurance_column) %in% c("Don't Know", 'Refused')] <- NA
+levels(insurance_column)[levels(insurance_column) %in% 
+                           c('Medicare', 'Medigap', 'Medicaid', 'Military Related', 'Indian Health Service', 
+                             'State Sponsored', 'Other Government Program')] <- 'Government'
+
+sex_label <- c('Male', 'Female')
+
+ageGroup_label <- c('18-24', '25-34', '35-44', '45-54', '55-64', '65+')
+
+race_label <- c('Non-Hispanic White', 'Non-Hispanic Black', 'Non-Hispanic American Indian', 
+                'Non-Hispanic Asian', 'Non-Hispanic Pacific Islands', 'Multiracial', 'Hispanic')
+race_column <- factor(BRFSSData_Nevada$racepr1, labels = race_label)
+levels(race_column)[levels(race_column) %in% 
+                      c('Non-Hispanic Black', 'Non-Hispanic American Indian', 
+                        'Non-Hispanic Asian', 'Non-Hispanic Pacific Islands', 'Multiracial')] <- 'Non-Hispanic Others'
+
+exercise_label <- c('Had Exercise in 30 days', 'No Exercise in 30 days', 'Refused')
+exercise_column <- factor(BRFSSData_Nevada$totinda, labels = exercise_label)
+levels(exercise_column)[levels(exercise_column) == 'Refused'] <- NA
+
+smoke_label <- c('Former Smoker', 'Current Smoker', 'Refused')
+smoke_column <- factor(BRFSSData_Nevada$rfsmok3, labels = smoke_label)
+levels(smoke_column)[levels(smoke_column) == 'Refused'] <- NA
+
+binge_label <- c('No', 'Yes', 'Refused')
+binge_column <- factor(BRFSSData_Nevada$rfbing6, labels = binge_label)
+levels(binge_column)[levels(binge_column) == 'Refused'] <- NA
+
+heart_label <- c('Yes', 'No')
+heart_column <- factor(BRFSSData_Nevada$michd, labels = heart_label) %>% relevel("Yes")
+
+asthma_label <- c('No', 'Yes', 'Refused')
+asthma_column <- factor(BRFSSData_Nevada$ltasth1, labels = asthma_label)
+levels(asthma_column)[levels(asthma_column) == 'Refused'] <- NA
+
+COPD_label <- c('Yes', 'No', "Don't Know", "Refused")
+COPD_column <- factor(BRFSSData_Nevada$chccopd3, labels = COPD_label)
+levels(COPD_column)[levels(COPD_column) %in% c("Don't Know", 'Refused')] <- NA
+
+depression_label <- c('Yes', 'No', "Don't Know", 'Refused')
+depression_column <- factor(BRFSSData_Nevada$addepev3, labels = depression_label)
+levels(depression_column)[levels(depression_column) %in% c("Don't Know", 'Refused')] <- NA
+
+
+```
+
+```{r}
+# Create new dataset and survey object
+BRFSSData_Nevada_values <- 
+BRFSSData_Nevada %>%
+  mutate(Insurance = insurance_column,
+         Sex = factor(sex, labels = sex_label),
+         AgeGroup = factor(age_g, labels = ageGroup_label),
+         Race = race_column,
+         Exercise = exercise_column,
+         Sleep = sleptim1,
+         Smoker = smoke_column,
+         Drinker = binge_column,
+         `Heart_Disease` = heart_column,
+         Asthma = asthma_column,
+         COPD = COPD_column,
+         Depression = depression_column) %>%
+  select(Sex, llcpwt:Depression) %>%
+  na.omit() # remove all NA
+
+BRFSSData_Nevada_survey <- svydesign(ids = ~ psu, strata = ~ ststr, weights = ~ llcpwt, data = BRFSSData_Nevada_values, nest = TRUE)
+```
+
+```{r}
+#LogRe:glm
+df <- BRFSSData_Nevada_values
+
+str(df)
+summary(df)
+
+df$Heart_Disease <- as.factor(df$Heart_Disease)
+df$Depression <- as.numeric(df$Depression)
+df$AgeGroup <- as.numeric(df$AgeGroup)
+df$Exercise <- as.numeric(df$Exercise)
+df$Smoker <- as.numeric(df$Smoker)
+df$Drinker <- as.numeric(df$Drinker)
+df$Insurance <- as.factor(df$Insurance)
+df$Race <- as.factor(df$Race)
+
+#del: Race + 
+model <- glm(Heart_Disease ~ Depression + Insurance + Asthma + AgeGroup + Exercise, 
+             data = df, 
+             family = binomial)
+summary(model)
+
+tidy_model <- tidy(model)
+tidy_model
+
+exp(tidy_model$estimate)
+
+significant_vars <- tidy_model %>% filter(p.value < 0.05)
+significant_vars
+
+# ggplot
+ggplot(tidy_model, aes(x = term, y = estimate)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = estimate - std.error, ymax = estimate + std.error), width = 0.2) +
+  coord_flip() +
+  labs(title = "Logistic Regression Coefficients for Heart Disease Prediction",
+       x = "Variables",
+       y = "Coefficient Estimates")
+
+# predict
+df$predicted_prob <- predict(model, type = "response")
+
+df$predicted_class <- ifelse(df$predicted_prob > 0.5, 1, 0)
+
+table(df$predicted_class, df$Heart_Disease)
+
+roc_curve <- roc(df$Heart_Disease, df$predicted_prob)
+plot(roc_curve, col = "yellow", main = "ROC Curve for Heart Disease Prediction")
+
+# AUC value
+auc(roc_curve)
+
+```
+
+```{r}
+#AgeGroup with '55-64' and '65+'
+BRFSSData_Nevada_values_55_65_plus <- 
+  BRFSSData_Nevada_values %>%
+  filter(AgeGroup %in% c('55-64', '65+')) %>%
+  na.omit()
+
+BRFSSData_Nevada_survey_55_65_plus <- svydesign(ids = ~ psu, strata = ~ ststr, weights = ~ llcpwt, data = BRFSSData_Nevada_values_55_65_plus, nest = TRUE)
+
+knn_data_55_65_plus <- BRFSSData_Nevada_values_55_65_plus %>%
+  select(Depression, Insurance, Race, AgeGroup, Exercise, Smoker, Drinker, Heart_Disease) %>%
+  mutate(
+    Depression = as.numeric(Depression) - 1,
+    Insurance = as.numeric(Insurance),
+    Race = as.numeric(Race),
+    AgeGroup = as.numeric(AgeGroup),
+    Exercise = as.numeric(Exercise) - 1,
+    Smoker = as.numeric(Smoker) - 1,
+    Drinker = as.numeric(Drinker) - 1,
+    Heart_Disease = as.numeric(Heart_Disease) - 1
+  )
+
+set.seed(8)
+train_index <- createDataPartition(knn_data_55_65_plus$Heart_Disease, p = 0.2, list = FALSE)
+train_data <- knn_data_55_65_plus[train_index, ]
+test_data <- knn_data_55_65_plus[-train_index, ]
+
+train_features <- train_data %>% select(-Heart_Disease)
+train_labels <- train_data$Heart_Disease
+test_features <- test_data %>% select(-Heart_Disease)
+test_labels <- test_data$Heart_Disease
+
+k <- 1
+knn_pred <- knn(train = train_features, test = test_features, cl = train_labels, k = k)
+
+confusion_matrix <- confusionMatrix(knn_pred, factor(test_labels))
+print(confusion_matrix)
+
+```
+
+```{r}
+# AgeGroup with '65+'
+
+BRFSSData_Nevada_values_65_plus <- 
+  BRFSSData_Nevada_values %>%
+  filter(AgeGroup == '65+') %>%
+  na.omit()
+
+# New BRFSSData_Nevada_values with 65+
+BRFSSData_Nevada_survey_65_plus <- svydesign(ids = ~ psu, strata = ~ ststr, weights = ~ llcpwt, data = BRFSSData_Nevada_values_65_plus, nest = TRUE)
+
+knn_data_65_plus <- BRFSSData_Nevada_values_65_plus %>%
+  select(Depression, Insurance, Race, AgeGroup, Exercise, Smoker, Drinker, Heart_Disease) %>%
+  mutate(
+    Depression = as.numeric(Depression) - 1,
+    Insurance = as.numeric(Insurance),
+    Race = as.numeric(Race),
+    AgeGroup = as.numeric(AgeGroup),
+    Exercise = as.numeric(Exercise) - 1,
+    Smoker = as.numeric(Smoker) - 1,
+    Drinker = as.numeric(Drinker) - 1,
+    Heart_Disease = as.numeric(Heart_Disease) - 1
+  )
+
+# train&test
+set.seed(2)
+train_index <- createDataPartition(knn_data_65_plus$Heart_Disease, p = 0.2, list = FALSE)
+train_data <- knn_data_65_plus[train_index, ]
+test_data <- knn_data_65_plus[-train_index, ]
+
+train_features <- train_data %>% select(-Heart_Disease)
+train_labels <- train_data$Heart_Disease
+test_features <- test_data %>% select(-Heart_Disease)
+test_labels <- test_data$Heart_Disease
+
+k <- 1
+
+knn_pred <- knn(train = train_features, test = test_features, cl = train_labels, k = k)
+
+knn_pred <- factor(knn_pred, levels = c(0, 1), labels = c("Yes", "No"))
+test_labels <- factor(test_labels, levels = c(0, 1), labels = c("Yes", "No"))
+
+confusion_matrix <- confusionMatrix(knn_pred, factor(test_labels))
+print(confusion_matrix)
+```
+
+
+
+```{r}
+#new Knn
+
+knn_data <- BRFSSData_Nevada_values %>%
+  select(Depression, Insurance, Race, AgeGroup, Exercise, Smoker, Drinker, Heart_Disease)
+
+knn_data <- knn_data %>%
+  mutate(
+    Depression = as.numeric(Depression) - 1,
+    Insurance = as.numeric(Insurance),
+    Race = as.numeric(Race),
+    AgeGroup = as.numeric(AgeGroup),
+    Exercise = as.numeric(Exercise) - 1,
+    Smoker = as.numeric(Smoker) - 1,
+    Drinker = as.numeric(Drinker) - 1,
+    Heart_Disease = as.numeric(Heart_Disease) - 1
+  )
+
+set.seed(123)
+train_index <- createDataPartition(knn_data$Heart_Disease, p = 0.2, list = FALSE)
+train_data <- knn_data[train_index, ]
+test_data <- knn_data[-train_index, ]
+
+
+train_features <- train_data %>% select(-Heart_Disease)
+train_labels <- train_data$Heart_Disease
+test_features <- test_data %>% select(-Heart_Disease)
+test_labels <- test_data$Heart_Disease
+
+k <- 5
+knn_pred <- knn(train = train_features, test = test_features, cl = train_labels, k = k)
+
+confusion_matrix <- confusionMatrix(knn_pred, factor(test_labels))
+print(confusion_matrix)
+
+```
+
+
+```{r}
+# k nearest neighbor
+df <- BRFSSData_Nevada_values
+
+str(df)
+summary(df)
+
+df$Heart_Disease <- as.factor(df$Heart_Disease)
+df$Depression <- as.numeric(as.character(df$Depression))
+df$AgeGroup <- as.numeric(as.character(df$AgeGroup))
+df$Exercise <- as.numeric(as.character(df$Exercise))
+df$Smoker <- as.numeric(as.character(df$Smoker))
+df$Drinker <- as.numeric(as.character(df$Drinker))
+
+numeric_vars <- df %>% select(Depression, AgeGroup, Exercise, Smoker, Drinker) %>% scale()
+
+categorical_vars <- df %>% select(Heart_Disease, Insurance, Race)
+df_scaled <- data.frame(categorical_vars, numeric_vars)
+
+
+set.seed(123)
+
+train_index <- sample(seq_len(nrow(df_scaled)), size = 0.8 * nrow(df_scaled))
+train_data <- df_scaled[train_index, ]
+test_data <- df_scaled[-train_index, ]
+
+train_features <- train_data %>% select(-Heart_Disease)
+test_features <- test_data %>% select(-Heart_Disease)
+train_labels <- train_data$Heart_Disease
+test_labels <- test_data$Heart_Disease
+
+
+sum(is.na(train_features))
+sum(is.na(test_features))
+
+train_features <- na.omit(train_features)
+test_features <- na.omit(test_features)
+
+train_labels <- train_labels[!is.na(rowSums(train_features))]
+test_labels <- test_labels[!is.na(rowSums(test_features))]
+
+
+train_features[is.na(train_features)] <- lapply(train_features, function(x) mean(x, na.rm = TRUE))
+test_features[is.na(test_features)] <- lapply(test_features, function(x) mean(x, na.rm = TRUE))
+
+print(dim(train_features))
+print(dim(test_features))
+
+k <- 5
+predicted_labels <- knn(train = train_features, test = test_features, cl = train_labels, k = k)
+
+confusion_matrix <- table(Predicted = predicted_labels, Actual = test_labels)
+print(confusion_matrix)
+
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Accuracy:", round(accuracy, 4)))
+
+confusionMatrix(predicted_labels, test_labels)
+
+confusionMatrix(predicted_labels, test_labels)
+
+train_control <- trainControl(method = "cv", number = 10)  
+knn_model <- train(Heart_Disease ~ ., data = train_data, method = "knn", trControl = train_control, tuneLength = 10)
+
+print(knn_model)
+plot(knn_model)
+
+```
+
+
+```{r}
+# Decision Tree
+df <- BRFSSData_Nevada_values
+str(df)
+summary(df)
+
+df$Heart_Disease <- as.factor(df$Heart_Disease)
+df$Depression <- as.numeric(df$Depression)
+df$AgeGroup <- as.numeric(df$AgeGroup)
+df$Exercise <- as.numeric(df$Exercise)
+df$Smoker <- as.numeric(df$Smoker)
+df$Drinker <- as.numeric(df$Drinker)
+df$Insurance <- as.factor(df$Insurance)
+df$Race <- as.factor(df$Race)
+
+set.seed(912)
+
+# train and test
+train_index <- sample(seq_len(nrow(df)), size = 0.8 * nrow(df))
+train_data <- df[train_index, ]
+test_data <- df[-train_index, ]
+
+tree_model <- rpart(Heart_Disease ~ AgeGroup + Asthma + Exercise + Smoker + Drinker, 
+                    data = train_data, 
+                    method = "class")
+
+printcp(tree_model)
+summary(tree_model)
+
+rpart.plot(tree_model, type = 3, extra = 101, fallen.leaves = TRUE, main = "Decision Tree for Heart Disease Prediction")
+
+predicted_class <- predict(tree_model, test_data, type = "class")
+
+confusion_matrix <- table(Predicted = predicted_class, Actual = test_data$Heart_Disease)
+print(confusion_matrix)
+
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+print(paste("Accuracy:", round(accuracy, 4)))
+
+predicted_prob <- predict(tree_model, test_data, type = "prob")[,2]
+roc_curve <- roc(test_data$Heart_Disease, predicted_prob)
+plot(roc_curve, col = "yellow", main = "ROC Curve for Heart Disease Prediction")
+
+# AUC value
+auc_value <- auc(roc_curve)
+print(paste("AUC:", round(auc_value, 4)))
+
+```
+
+
+```{r}
+# Bayesian Models
+df <- BRFSSData_Nevada_values
+str(df)
+summary(df)
+
+df$Heart_Disease <- as.factor(df$Heart_Disease)
+df$Depression <- as.numeric(df$Depression)
+df$AgeGroup <- as.numeric(df$AgeGroup)
+df$Exercise <- as.numeric(df$Exercise)
+df$Smoker <- as.numeric(df$Smoker)
+df$Drinker <- as.numeric(df$Drinker)
+df$Insurance <- as.factor(df$Insurance)
+df$Race <- as.factor(df$Race)
+
+formula <- bf(Heart_Disease ~ AgeGroup + Exercise + Smoker + Drinker)
+bayesian_model <- brm(formula, data = df, family = bernoulli(), chains = 4, iter = 2000)
+summary(bayesian_model)
+
+posterior_summary(bayesian_model)
+
+coefficients <- fixef(bayesian_model)
+coefficients
+
+exp(coefficients[, "Estimate"])
+
+# ggplot
+plot(bayesian_model)
+
+credible_intervals <- posterior_interval(bayesian_model)
+credible_intervals
+
+significant_vars <- credible_intervals[credible_intervals[,1] > 0 | credible_intervals[,2] < 0, ]
+significant_vars
+
+df$predicted_prob <- fitted(bayesian_model, newdata = df, type = "response")
+
+df$predicted_class <- ifelse(df$predicted_prob > 0.5, 1, 0)
+
+table(df$predicted_class, df$Heart_Disease)
+
+roc_curve <- roc(df$Heart_Disease, df$predicted_prob)
+plot(roc_curve, col = "yellow", main = "ROC Curve for Heart Disease Prediction")
+
+# AUC
+auc(roc_curve)
+
+```
+
+
+```{r}
+# Create summary table
+summary_table1 <- 
+  tbl_svysummary(BRFSSData_Nevada_survey,
+                 by = `Heart Disease`,
+                 type = list(Drinker ~ 'categorical',
+                             Asthma ~ 'categorical',
+                             COPD ~ 'categorical',
+                             Depression ~ 'categorical'),
+                 statistic = list(all_categorical() ~ '{n_unweighted} ({p_unweighted}%, {p}%)'),
+                 include = -c('llcpwt', 'psu', 'ststr', 'Sleep'),
+                 missing_stat = '{N_miss_unweighted}') %>% 
+  modify_header(label = '**Heart Disease**',
+                all_stat_cols() ~ '**{level}** (n = {n_unweighted})')
+summary_table1
+```
+

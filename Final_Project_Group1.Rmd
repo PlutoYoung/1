@@ -1,0 +1,147 @@
+---
+title: "Final Project Group1"
+author: "Le Li, Qianhao Li, Chen Yang"
+date: '2024-08-17'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Install and load required packages
+
+```{r Packages, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(knitr)
+library(haven)
+library(readxl)
+library(janitor)
+library(ggpubr)
+library(survey)
+library(ggplot2)
+library(ggsurvey)
+library(gtsummary)
+library(questionr)
+```
+
+### Dataset: BRFSS
+
+#### About
+
+```{r}
+# Read .dta file into R
+BRFSSData <- read_dta('/Users/elmer/Desktop/Academic/Todd Ogden Biostatistics/Final Project/LLCP2022.dta')
+BRFSSData <- BRFSSData %>% clean_names()
+
+BRFSSData_survey <- svydesign(ids = ~ psu, strata = ~ ststr, data = BRFSSData, weights = ~ llcpwt, nest = TRUE)
+
+list_of_features <- c('priminsr', 'sex', 'educa', 'age_g', 'racepr1', 'employ1', 
+                      'totinda', 'sleptim1', 'rfsmok3', 'rfbing6', 'sdhstre1', 
+                      'michd', 'ltasth1', 'chccopd3')
+
+list_of_survey_unit <- c('llcpwt', 'psu', 'ststr')
+
+dim(BRFSSData_Nevada)
+
+BRFSSData_Nevada <- BRFSSData %>% filter(state == 32) %>% select(c(list_of_features, list_of_survey_unit))
+```
+
+#### Variables
+
+```{r}
+# Code values
+insurance_label <- c('Through Employer', 'Private', 'Medicare', 'Medigap', 'Medicaid', 'Military Related',
+                     'Indian Health Service', 'State Sponsored', 'Other Government Program', 
+                     "Don't Know", 'No Coverage', 'Refused')
+
+sex_label <- c('Male', 'Female')
+
+education_label <- c('Never or Kindergarten', 'Elementary', 'Some High School', 'High School Graduate', 'Some College',
+                     'College Graduate', 'Refused')
+
+ageGroup_label <- c('18-24', '25-34', '35-44', '45-54', '55-64', '65+')
+
+race_label <- c('Non-Hispanic White', 'Non-Hispanic Black', 'Non-Hispanic American Indian', 
+                'Non-Hispanic Asian', 'Non-Hispanic Pacific Islands', 'Multiracial', 'Hispanic')
+
+employment_label <- c('Employed', 'Self-Employed', 'Out of Work >1 Yr', 'Out of Work <1 Yr',
+                      'Homemaker', 'Student', 'Retired', 'Unable to Work', 'Refused')
+
+exercise_label <- c('Had Exercise in 30 days', 'No Exercise in 30 days', 'Refused')
+
+smoke_label <- c('Former Smoker', 'Current Smoker', 'Refused')
+
+binge_label <- c('No', 'Yes', 'Refused')
+
+SDOH_label <- c('Always', 'Usually', 'Sometimes', 'Rarely', 'Never', "Don't Know", 'Refused')
+
+heart_label <- c('Yes', 'No')
+
+asthma_label <- c('No', 'Yes', 'Refused')
+
+COPD_label <- c('Yes', 'No', "Don't Know")
+```
+
+```{r}
+BRFSSData_Nevada_values <- 
+BRFSSData_Nevada %>%
+  mutate(insurance = factor(priminsr, labels = insurance_label),
+         sex = factor(sex, labels = sex_label),
+         education = factor(educa, labels = education_label),
+         ageGroup = factor(age_g, labels = ageGroup_label),
+         race = factor(racepr1, labels = race_label),
+         employment = factor(employ1, labels = employment_label),
+         exercise = factor(totinda, labels = exercise_label),
+         sleep = sleptim1,
+         smoker = factor(rfsmok3, labels = smoke_label),
+         drinker = factor(rfbing6, labels = binge_label),
+         stress = factor(sdhstre1, labels = SDOH_label),
+         heart_disease = factor(michd, labels = heart_label),
+         asthma = factor(ltasth1, labels = asthma_label),
+         COPD = factor(chccopd3, labels = COPD_label)) %>%
+  select(sex, llcpwt:COPD)
+
+kable(
+  tibble(
+    variable = colnames(BRFSSData_Nevada_values[, -c(2, 3, 4)]),
+    missing = colSums(is.na(BRFSSData_Nevada_values[, -c(2, 3, 4)]))
+  )
+)
+
+BRFSSData_Nevada_survey <- svydesign(ids = ~ psu, strata = ~ ststr, weights = ~ llcpwt, data = BRFSSData_Nevada_values, nest = TRUE)
+
+tbl_svysummary(BRFSSData_Nevada_survey, 
+               statistic = list(all_categorical() ~ "{n_unweighted} ({p_unweighted}%, {p}%)",
+                                all_continuous() ~ "{mean} ({mean.std.error})"),
+               include = asthma)
+```
+
+```{r}
+BRFSSData_Nevada_values %>%
+  ggplot(aes(x = stress, fill = heart_disease)) +
+  geom_bar(position = 'fill', width = 0.5) +
+  theme_light() +
+  theme(legend.position = 'bottom', plot.title = element_text(hjust = 0.5)) +
+  labs(x = 'exercise status',
+       y = 'percent',
+       title = 'Heart disease distribution across exercise status')
+
+BRFSSData_Nevada_values %>%
+  filter(sleep != 77 & sleep != 99) %>%
+  ggplot(aes(x = sleep, y = heart_disease)) +
+  geom_boxplot() +
+  theme_light() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(x = 'sleep hours',
+       title = 'Sleep Hours Distribution')
+```
+
+```{r}
+logistic_data <- BRFSSData_Nevada_values %>% filter(!is.na(heart_disease)) %>% filter(exercise != 'Refused')
+logistic_model <- glm(heart_disease ~ exercise + ageGroup, data = logistic_data, family = 'binomial')
+summary(logistic_model)
+plot(logistic_model)
+
+summary(svyglm(heart_disease ~ exercise + ageGroup, design = BRFSSData_Nevada_survey, family = 'quasibinomial'))
+```
